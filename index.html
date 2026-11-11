@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="Tap to pour slush into the moving cup. A mini game from Fiji Ice.">
+<title>Fiji Ice Slush Tap</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600&family=Lilita+One&display=swap">
+<style>
+/* Layout: one centered phone-shaped game column, HUD of six pips above a canvas, result card overlaid on the canvas. Dark navy, icy cyan and the logo's crimson. */
+:root {
+  --bg: #06101f;
+  --panel: #0d2340;
+  --line: #1c3d68;
+  --cyan: #7ae8ff;
+  --blue: #1aa6ff;
+  --crimson: #e23a6d;
+  --text: #eaf7ff;
+  --muted: #8fb0c9;
+  --font-display: "Lilita One", "Arial Rounded MT Bold", "Trebuchet MS", sans-serif;
+  --font-body: "DM Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  color-scheme: dark;
+}
+html, body { min-height: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 15px;
+  padding-block: 14px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+.top { width: min(100%, 400px); display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.brand { font-family: var(--font-display); font-size: 26px; letter-spacing: .02em; line-height: 1; }
+.brand span { color: var(--crimson); }
+.tag { color: var(--muted); font-size: 12px; letter-spacing: .12em; text-transform: uppercase; }
+.hud { width: min(100%, 400px); display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.pips { display: flex; gap: 8px; }
+.pip { width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--line); background: transparent; display: grid; place-items: center; font-size: 12px; line-height: 1; transition: background .2s, border-color .2s; }
+.pip.hit { background: var(--cyan); border-color: var(--cyan); }
+.pip.miss { border-color: var(--crimson); color: var(--crimson); }
+.pip.miss::after { content: "\00d7"; font-weight: 600; }
+.count { font-variant-numeric: tabular-nums; color: var(--muted); }
+.count b { color: var(--text); font-weight: 600; }
+.stage {
+  position: relative;
+  width: min(100%, 400px);
+  width: min(100%, 400px, calc((100dvh - 150px) * 0.643));
+  aspect-ratio: 360 / 560;
+  border-radius: 18px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+}
+canvas { display: block; width: 100%; height: 100%; }
+.overlay { position: absolute; inset: 0; display: grid; place-items: center; padding: 20px; background: rgba(6, 16, 31, .72); }
+.overlay[hidden] { display: none; }
+.card { width: 100%; max-width: 300px; background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 22px 20px; display: flex; flex-direction: column; gap: 12px; }
+.card h1, .card h2 { font-family: var(--font-display); font-weight: 400; font-size: 30px; line-height: 1.05; text-wrap: balance; }
+.card p { color: var(--muted); line-height: 1.45; }
+.card p strong { color: var(--text); font-weight: 600; }
+.score { font-family: var(--font-display); font-size: 44px; line-height: 1; color: var(--cyan); font-variant-numeric: tabular-nums; }
+.score small { font-size: 22px; color: var(--muted); }
+button.go { font: inherit; font-weight: 600; font-size: 16px; color: #fff; background: var(--crimson); border: 0; border-radius: 12px; padding: 13px 16px; cursor: pointer; min-height: 48px; }
+button.go:hover { filter: brightness(1.08); }
+button.go:focus-visible { outline: 3px solid var(--cyan); outline-offset: 3px; }
+.hint { width: min(100%, 400px); color: var(--muted); font-size: 13px; text-align: center; }
+</style>
+</head>
+<body>
+
+<div class="top">
+  <div class="brand">Fiji<span>Ice</span></div>
+  <div class="tag">Slush Tap</div>
+</div>
+
+<div class="hud" aria-live="polite">
+  <div class="pips" id="pips"></div>
+  <div class="count"><b id="hits">0</b> of 6 in the cup</div>
+</div>
+
+<div class="stage" id="stage">
+  <canvas id="game" aria-label="Slush tap game. Tap the screen to pour slush into the moving cup."></canvas>
+  <div class="overlay" id="overlay">
+    <div class="card" id="card"></div>
+  </div>
+</div>
+<div class="hint">Tap anywhere on the game to pour. Space bar works too.</div>
+
+<script>
+(function () {
+  var cv = document.getElementById('game');
+  var ctx = cv.getContext('2d');
+  var W = 360, H = 560, TOTAL = 6;
+  var BAR_Y = H - 64, CUP_H = 112, CUP_TOP = BAR_Y - CUP_H, NOZ_Y = 74;
+  var dpr = Math.min(window.devicePixelRatio || 1, 2);
+  cv.width = W * dpr; cv.height = H * dpr;
+
+  var pipsEl = document.getElementById('pips');
+  var hitsEl = document.getElementById('hits');
+  var overlay = document.getElementById('overlay');
+  var card = document.getElementById('card');
+  var stage = document.getElementById('stage');
+
+  var st;
+  function fresh() {
+    return { mode: 'ready', phase: 0, cphase: 0, cupAmp: 0, hits: 0, results: [], blob: null, parts: [], splats: [], fill: 0, endAt: 0, t: 0 };
+  }
+  st = fresh();
+
+  function drawPips() {
+    pipsEl.innerHTML = '';
+    for (var i = 0; i < TOTAL; i++) {
+      var p = document.createElement('div');
+      p.className = 'pip' + (st.results[i] === true ? ' hit' : st.results[i] === false ? ' miss' : '');
+      pipsEl.appendChild(p);
+    }
+    hitsEl.textContent = st.hits;
+  }
+
+  function speed() { return 2.0 + st.results.length * 0.3; }
+  function nozX() { return W / 2 + Math.sin(st.phase) * (W / 2 - 46); }
+  function cupX() { return W / 2 + Math.sin(st.cphase) * 64 * st.cupAmp; }
+
+  function pour() {
+    if (st.mode !== 'play' || st.blob) return;
+    st.blob = { x: nozX(), y: NOZ_Y + 16, vy: 60, res: null };
+  }
+
+  function burst(x, y, n, up) {
+    for (var i = 0; i < n; i++) {
+      st.parts.push({ x: x, y: y, vx: (Math.random() - .5) * 170, vy: -(up ? 110 + Math.random() * 150 : 40 + Math.random() * 70), life: .55 + Math.random() * .25, age: 0, r: 2 + Math.random() * 2.5 });
+    }
+  }
+
+  function resolve(hit, x, y) {
+    st.results.push(hit);
+    if (hit) st.hits++;
+    else st.splats.push({ x: x, w: 16 + Math.random() * 10 });
+    burst(x, y, hit ? 12 : 8, hit);
+    st.blob = null;
+    drawPips();
+    if (st.results.length >= TOTAL) { st.mode = 'ending'; st.endAt = st.t + 0.9; }
+  }
+
+  function update(dt) {
+    st.t += dt;
+    st.phase += speed() * dt;
+    var target = st.results.length >= 3 && st.mode !== 'ready' ? 1 : 0;
+    st.cupAmp += (target - st.cupAmp) * Math.min(1, dt * 2);
+    st.cphase += (1.1 + st.results.length * 0.1) * dt;
+    st.fill += (st.hits / TOTAL - st.fill) * Math.min(1, dt * 6);
+
+    var b = st.blob;
+    if (b) {
+      b.vy += 1100 * dt; b.y += b.vy * dt;
+      if (!b.res && b.y >= CUP_TOP + 6) {
+        if (Math.abs(b.x - cupX()) <= 37) { b.res = 'hit'; resolve(true, b.x, CUP_TOP + 6); b = null; }
+        else b.res = 'miss';
+      }
+      if (b && b.res === 'miss' && b.y >= BAR_Y) resolve(false, b.x, BAR_Y);
+    }
+    for (var i = st.parts.length - 1; i >= 0; i--) {
+      var p = st.parts[i]; p.age += dt;
+      if (p.age > p.life) { st.parts.splice(i, 1); continue; }
+      p.vy += 700 * dt; p.x += p.vx * dt; p.y += p.vy * dt;
+    }
+    if (st.mode === 'ending' && st.t >= st.endAt) { st.mode = 'over'; showEnd(); }
+  }
+
+  function rr(x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y); ctx.lineTo(x + w - r, y); ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+    ctx.lineTo(x + w, y + h - r); ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    ctx.lineTo(x + r, y + h); ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+    ctx.lineTo(x, y + r); ctx.quadraticCurveTo(x, y, x + r, y); ctx.closePath();
+  }
+  function cupPath(cx) {
+    ctx.beginPath();
+    ctx.moveTo(cx - 42, CUP_TOP); ctx.lineTo(cx + 42, CUP_TOP);
+    ctx.lineTo(cx + 31, BAR_Y); ctx.lineTo(cx - 31, BAR_Y); ctx.closePath();
+  }
+
+  function draw() {
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    var g = ctx.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0, '#0b2347'); g.addColorStop(1, '#06101f');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = 'rgba(122,232,255,.06)';
+    [[60, 210, 46], [300, 260, 30], [240, 170, 54], [90, 330, 22]].forEach(function (c) { ctx.beginPath(); ctx.arc(c[0], c[1], c[2], 0, 6.2832); ctx.fill(); });
+
+    var nx = nozX(), cx = cupX();
+
+    // rail
+    ctx.fillStyle = '#12305a'; rr(14, 26, W - 28, 30, 10); ctx.fill();
+    ctx.strokeStyle = '#2a5a94'; ctx.lineWidth = 1.5; ctx.stroke();
+
+    // aim guide
+    ctx.save(); ctx.setLineDash([4, 8]); ctx.strokeStyle = 'rgba(122,232,255,.22)'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(nx, NOZ_Y + 16); ctx.lineTo(nx, BAR_Y); ctx.stroke(); ctx.restore();
+
+    // bar
+    var bg = ctx.createLinearGradient(0, BAR_Y, 0, H); bg.addColorStop(0, '#12315c'); bg.addColorStop(1, '#091a33');
+    ctx.fillStyle = bg; ctx.fillRect(0, BAR_Y, W, H - BAR_Y);
+    ctx.fillStyle = 'rgba(122,232,255,.5)'; ctx.fillRect(0, BAR_Y, W, 2);
+    st.splats.forEach(function (s) { ctx.fillStyle = 'rgba(70,200,255,.8)'; ctx.beginPath(); ctx.ellipse(s.x, BAR_Y + 5, s.w, 4, 0, 0, 6.2832); ctx.fill(); });
+
+    // straw
+    ctx.strokeStyle = '#e23a6d'; ctx.lineWidth = 7; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(cx + 10, BAR_Y - 8); ctx.lineTo(cx + 26, CUP_TOP - 38); ctx.stroke();
+
+    // cup contents
+    ctx.save(); cupPath(cx); ctx.clip();
+    ctx.fillStyle = 'rgba(122,232,255,.08)'; ctx.fillRect(cx - 50, CUP_TOP, 100, CUP_H);
+    var level = BAR_Y - st.fill * (CUP_H - 6);
+    if (st.fill > 0.01) {
+      var sg = ctx.createLinearGradient(0, level, 0, BAR_Y); sg.addColorStop(0, '#8cecff'); sg.addColorStop(1, '#1aa6ff');
+      ctx.fillStyle = sg; ctx.beginPath(); ctx.moveTo(cx - 50, BAR_Y);
+      for (var x = -50; x <= 50; x += 5) ctx.lineTo(cx + x, level + Math.sin(st.t * 5 + x * .2) * 1.6);
+      ctx.lineTo(cx + 50, BAR_Y); ctx.closePath(); ctx.fill();
+    }
+    ctx.restore();
+    cupPath(cx); ctx.strokeStyle = 'rgba(234,247,255,.7)'; ctx.lineWidth = 2.5; ctx.lineJoin = 'round'; ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,255,255,.22)'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(cx - 32, CUP_TOP + 12); ctx.lineTo(cx - 24, BAR_Y - 14); ctx.stroke();
+
+    // stream and blob
+    var b = st.blob;
+    if (b) {
+      var top = Math.max(NOZ_Y + 14, b.y - 46);
+      ctx.strokeStyle = '#5fdcff'; ctx.lineWidth = 7; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(b.x, top); ctx.lineTo(b.x, b.y); ctx.stroke();
+      ctx.fillStyle = '#8cecff'; ctx.beginPath(); ctx.arc(b.x, b.y, 8, 0, 6.2832); ctx.fill();
+    }
+
+    // nozzle
+    ctx.fillStyle = '#c9ecff'; rr(nx - 6, NOZ_Y - 4, 12, 18, 3); ctx.fill();
+    ctx.fillStyle = '#e23a6d'; rr(nx - 24, 32, 48, 44, 9); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,.9)'; rr(nx - 17, 44, 34, 12, 4); ctx.fill();
+    ctx.fillStyle = '#7a1230'; ctx.font = '600 9px DM Sans, sans-serif'; ctx.textAlign = 'center'; ctx.fillText('SLUSH', nx, 53);
+
+    // particles
+    st.parts.forEach(function (p) {
+      ctx.globalAlpha = 1 - p.age / p.life; ctx.fillStyle = '#8cecff';
+      ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, 6.2832); ctx.fill();
+    });
+    ctx.globalAlpha = 1;
+  }
+
+  function showStart() {
+    card.innerHTML = '<h1>Fill the cup</h1><p>The nozzle keeps moving. Tap to pour and land the slush in the cup. You get <strong>6 pours</strong>, and it speeds up.</p><button class="go" id="goBtn" type="button">Start pouring</button>';
+    overlay.hidden = false;
+    document.getElementById('goBtn').addEventListener('click', start);
+  }
+
+  function showEnd() {
+    var h = st.hits, title = h === 6 ? 'Perfect fill' : h >= 4 ? 'Smooth pour' : h >= 2 ? 'A bit spilled' : 'Missed it';
+    card.innerHTML = '<h2>' + title + '</h2><div class="score">' + h + '<small> / ' + TOTAL + '</small></div>' +
+      '<p>Clear ice for your next event? <strong>DM or WhatsApp Fiji Ice to order.</strong></p>' +
+      '<button class="go" id="goBtn" type="button">Play again</button>';
+    overlay.hidden = false;
+    document.getElementById('goBtn').addEventListener('click', start);
+  }
+
+  function start() {
+    st = fresh(); st.mode = 'play';
+    overlay.hidden = true; drawPips();
+  }
+
+  stage.addEventListener('pointerdown', function (e) {
+    if (e.target.closest('button')) return;
+    if (st.mode === 'play') pour();
+  });
+  window.addEventListener('keydown', function (e) {
+    if (e.code === 'Space' && st.mode === 'play' && !(e.target && e.target.closest && e.target.closest('button'))) { e.preventDefault(); pour(); }
+  });
+
+  var last = performance.now();
+  function frame(now) {
+    var dt = Math.min(0.033, (now - last) / 1000); last = now;
+    update(dt); draw();
+    requestAnimationFrame(frame);
+  }
+  drawPips(); showStart();
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
